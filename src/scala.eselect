@@ -1,0 +1,164 @@
+# Copyright 1999-2013 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+
+DESCRIPTION="Manage Scala symlinks"
+MAINTAINER="nathan@njlg.info"
+SVN_DATE="$ Date: $"
+VERSION="${SVN_DATE}"
+
+sharedir=/usr/share
+bindir=/usr/bin
+man1dir=/usr/share/man/man1
+files=( fsc scala scalac scaladoc scalap )
+
+find_targets() {
+	for t in ${ROOT}${sharedir}/scala* ; do
+		[[ -e $t ]] || continue
+		echo ${t}
+	done
+}
+
+check_target() {
+	local target=${1} targets
+	targets=( $(find_targets ) )
+
+	# number from the list
+	if is_number ${target} && [[ ${target} -ge 1 ]] ; then
+		if [[ ${target} -gt ${#targets[@]} ]] ; then
+			target="invalid"
+		elif [[ -e "${targets[$(( ${target} - 1 ))]}" ]] ; then
+			target=$(basename ${targets[$((${target} - 1 ))]} )
+		else
+			write_warning_msg ${targets[$((${target} - 1 ))]}
+			target="invalid"
+		fi
+	else
+	[[ -e "${ROOT}${bindir}/${target}" ]] || \
+			target="invalid"
+	fi
+
+	echo ${target}
+}
+
+remove_symlinks() {
+	for f in "${files[@]}"
+	do
+		rm -f "${ROOT}${bindir}/$f"
+	done
+
+	for m in "${files[@]}"
+	do
+		for e in 1 1.gz 1.bz2 1.lzma
+		do
+			rm -f "${ROOT}${man1dir}/${m}.${e}"
+		done
+	done
+}
+
+create_man_symlinks() {
+	local target=${1} path
+
+	path=${ROOT}${man1dir}/
+	for m in "${files[@]}"
+	do
+		for e in 1 1.gz 1.bz2 1.lzma
+		do
+			if [ -e "${path}${m}-${target}.${e}" ]
+			then
+				ln -s "${path}${m}-${target}.${e}" "${path}${m}.${e}"
+			fi
+		done
+	done
+}
+
+create_symlinks() {
+	local target=${1}
+
+	local path="${ROOT}${bindir}/"
+	for f in ${ROOT}${sharedir}/${target}/bin/*
+	do
+		base=$(basename $f)
+		ln -s "${f}" "${path}${base}" || \
+			die -q "Could not set ${f} symlink"
+	done
+
+	create_man_symlinks ${target}
+
+	write_list_start "Successfully switched to profile:"
+	write_kv_list_entry "${target}" ""
+}
+
+### show action ###
+describe_show() {
+	echo "Prints the current configuration."
+}
+
+do_show() {
+	[[ -z "${@}" ]] || die -q "This function does not expect any arguments"
+
+	local rb=""
+
+	write_list_start "Current Scala version:"
+	if [[ -L "${ROOT}${bindir}/scala" ]] ; then
+		path=$(canonicalise ${ROOT}${bindir}/scala )
+		half=${path#$sharedir/}
+		ver=${half%/bin/scala}
+		write_kv_list_entry $ver ""
+	elif [[ -e "${ROOT}${bindir}/scala" ]] ; then
+		write_warning_msg "${bindir}/scala is a SLOT incompatible version."
+		write_kv_list_entry "$(basename $(canonicalise ${ROOT}${bindir}/scala) )" ""
+	else
+		write_kv_list_entry "(none)"
+		return 1
+	fi
+}
+
+### list action ###
+describe_list() {
+	echo "Lists available Scala profiles."
+}
+
+do_list() {
+	write_list_start "Available Scala profiles:"
+	local targets=( $(find_targets) )
+	local i line
+
+	for (( i = 0; i < ${#targets[@]}; i++ )) ; do
+		line=$(basename "${targets[i]}")
+
+		# find out the current version
+		if [[ "${targets[i]}/bin/scala" = $(canonicalise "${ROOT}${bindir}/scala") ]] ; then
+			targets[i]=$(highlight_marker "${line}")
+		else
+			targets[i]=${line}
+		fi
+	done
+	write_numbered_list -m "(none found)" "${targets[@]}"
+}
+
+### set action ###
+describe_set() {
+	echo "Switches to a Scala profile."
+}
+
+describe_set_options() {
+	echo "target : Target name or number (from 'list' action)"
+}
+
+describe_set_parameters() {
+	echo "<target>"
+}
+
+do_set() {
+	[[ -z ${@} ]] && die -q "Parameter expected."
+	
+	local target=$(check_target ${1})
+	
+	[[ $target = "invalid" ]] && die -q "Can't use that profile. No suitable Scala interpreter found."
+	
+	remove_symlinks || \
+		die -q "Could not remove symlinks"
+
+	create_symlinks ${target}
+}
+
